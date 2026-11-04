@@ -5,8 +5,16 @@ import SystemAppearance
 
 @main
 enum SystemAppearanceCLI {
-    static func main() async {
-        await AppearanceCommand.main()
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        _ = application.setActivationPolicy(.accessory)
+
+        Task {
+            await AppearanceCommand.main()
+        }
+
+        application.run()
     }
 }
 
@@ -27,12 +35,7 @@ private enum GetCommand: RunnableArgumentCommand {
     static let name = "get"
 
     static func run(_ invocation: ParsedInvocation) async throws {
-        let appearance = await MainActor.run {
-            let application = NSApplication.shared
-            _ = application.setActivationPolicy(.prohibited)
-            return Appearance.current
-        }
-        emit(appearance)
+        emit(Appearance.current)
     }
 }
 
@@ -40,19 +43,17 @@ private enum WatchCommand: RunnableArgumentCommand {
     static let name = "watch"
 
     static func run(_ invocation: ParsedInvocation) async throws {
-        await MainActor.run {
-            let application = NSApplication.shared
-            _ = application.setActivationPolicy(.prohibited)
-
+        let observer = await MainActor.run { () -> AppearanceObserver in
             let observer = AppearanceObserver()
-            observer.start { appearance in
-                emit(appearance)
-            }
-
-            withExtendedLifetime(observer) {
-                application.run()
-            }
+            observer.start(emit)
+            return observer
         }
+
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        continuation.finish()
+        await observer.stop()
     }
 }
 
